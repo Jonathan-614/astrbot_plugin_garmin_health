@@ -1,0 +1,7 @@
+name: astrbot_plugin_garmin_health
+display_name: 佳明健康看板
+desc: 佳明健康看板 - 通过 Garmin Connect 查询健康数据并生成分析报告，支持固定命令 + 自然语言工具链调用
+author: "Jonathan-614"
+version: 1.0.0
+icon: logo.png
+repo: https://github.com/Jonathan-614/astrbot_plugin_garmin_health

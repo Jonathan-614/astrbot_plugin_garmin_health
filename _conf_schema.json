@@ -1,0 +1,24 @@
+{
+  "garmin_email": {
+    "description": "Garmin Connect 登录邮箱",
+    "type": "string",
+    "default": "",
+    "hint": "请填写Garmin账号的登录邮箱",
+    "required": true
+  },
+  "garmin_password": {
+    "description": "Garmin Connect 登录密码",
+    "type": "string",
+    "default": "",
+    "hint": "请填写Garmin账号的密码",
+    "required": true,
+    "sensitive": true
+  },
+  "garmin_is_cn": {
+    "description": "是否为Garmin中国区账号",
+    "type": "bool",
+    "default": true,
+    "hint": "中国区账号选是，国际区账号选否",
+    "required": false
+  }
+}
