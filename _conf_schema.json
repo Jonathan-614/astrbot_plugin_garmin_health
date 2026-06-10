@@ -20,5 +20,12 @@
     "default": true,
     "hint": "中国区账号选是，国际区账号选否",
     "required": false
+  },
+  "garmin_max_activities": {
+    "description": "活动分页拉取上限",
+    "type": "int",
+    "default": 600,
+    "hint": "用于年度报告、PB、跑量和活动搜索等统计。默认拉取最近600条活动，通常足够覆盖近几年记录；活动很多可调大，最大建议10000；调大后查询会更慢。",
+    "required": false
   }
 }
