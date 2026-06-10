@@ -107,26 +107,31 @@ class GarminHealthPlugin(Star):
 
     @filter.command("健康")
     async def health_today(self, event: AstrMessageEvent):
+        """今日健康概览（步数/心率/睡眠）。无参数，直接查询当日数据。"""
         result = await health_today_data(self.client_manager)()
         yield event.plain_result(result)
 
     @filter.command("心率")
     async def heart_rate_report(self, event: AstrMessageEvent):
+        """最近7天心率趋势。参数：days（天数，默认7天）。"""
         result = await health_heart_rate_days(self.client_manager, 7)()
         yield event.plain_result(result)
 
     @filter.command("睡眠")
     async def sleep_report(self, event: AstrMessageEvent):
+        """最近7天睡眠报告。参数：days（天数，默认7天）。"""
         result = await health_sleep_days(self.client_manager, 7)()
         yield event.plain_result(result)
 
     @filter.command("步数")
     async def steps_report(self, event: AstrMessageEvent):
+        """最近7天步数数据。参数：days（天数，默认7天）。"""
         result = await health_steps_days(self.client_manager, 7)()
         yield event.plain_result(result)
 
     @filter.command("身体报告")
     async def detailed_report(self, event: AstrMessageEvent):
+        """综合健康诊断报告（含7天平均和建议）"""
         result = await detailed_health_report(self.client_manager)()
         yield event.plain_result(result)
 
@@ -136,6 +141,7 @@ class GarminHealthPlugin(Star):
 
     @filter.command("活动")
     async def recent_activities(self, event: AstrMessageEvent):
+        """查看活动记录（支持按日期/关键词/数量筛选）"""
         msg = event.message_str.strip()
         parts = msg.split(maxsplit=1)
         arg = parts[1].strip() if len(parts) >= 2 else ""
@@ -222,6 +228,7 @@ class GarminHealthPlugin(Star):
 
     @filter.command("跑量")
     async def running_volume(self, event: AstrMessageEvent):
+        """跑量统计（路跑+越野跑，支持按日期筛选）"""
         msg = event.message_str.strip()
         parts = msg.split(maxsplit=1)
         arg = parts[1].strip() if len(parts) >= 2 else ""
@@ -243,6 +250,7 @@ class GarminHealthPlugin(Star):
 
     @filter.command("徒步")
     async def hiking_volume(self, event: AstrMessageEvent):
+        """徒步统计（支持按日期筛选）"""
         msg = event.message_str.strip()
         parts = msg.split(maxsplit=1)
         arg = parts[1].strip() if len(parts) >= 2 else ""
@@ -263,6 +271,7 @@ class GarminHealthPlugin(Star):
 
     @filter.command("步行")
     async def walking_volume(self, event: AstrMessageEvent):
+        """步行统计（支持按日期筛选）"""
         msg = event.message_str.strip()
         parts = msg.split(maxsplit=1)
         arg = parts[1].strip() if len(parts) >= 2 else ""
@@ -283,6 +292,7 @@ class GarminHealthPlugin(Star):
 
     @filter.command("骑行")
     async def cycling_volume(self, event: AstrMessageEvent):
+        """骑行统计（支持按日期筛选）"""
         msg = event.message_str.strip()
         parts = msg.split(maxsplit=1)
         arg = parts[1].strip() if len(parts) >= 2 else ""
@@ -303,6 +313,7 @@ class GarminHealthPlugin(Star):
 
     @filter.command("游泳")
     async def swimming_volume(self, event: AstrMessageEvent):
+        """游泳统计（支持按日期筛选）"""
         msg = event.message_str.strip()
         parts = msg.split(maxsplit=1)
         arg = parts[1].strip() if len(parts) >= 2 else ""
@@ -330,11 +341,13 @@ class GarminHealthPlugin(Star):
     @filter.command("Pb")
     @filter.command("pB")
     async def personal_best(self, event: AstrMessageEvent):
+        """个人最佳记录（最长距离/最快配速/最大爬升/最长时长）"""
         result = await personal_best_report(self.client_manager)()
         yield event.plain_result(result)
 
     @filter.command("年度报告")
     async def yearly_stats(self, event: AstrMessageEvent):
+        """年度运动报告（总活动/距离/时长/爬升/月度分布）"""
         msg = event.message_str.strip()
         parts = msg.split(maxsplit=1)
         arg = parts[1].strip() if len(parts) >= 2 else ""
