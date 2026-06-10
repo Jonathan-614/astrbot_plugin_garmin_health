@@ -1,8 +1,11 @@
 # 佳明健康看板
 
+[![GitHub release](https://img.shields.io/github/v/release/Jonathan-614/astrbot_plugin_garmin_health)](https://github.com/Jonathan-614/astrbot_plugin_garmin_health/releases)
+[![Changelog](https://img.shields.io/badge/changelog-v1.0.1-blue)](CHANGELOG.md)
+
 通过 Garmin Connect 查询健康数据（心率、睡眠、步数、活动记录等）并生成分析报告。
 
-**版本 1.0.0** —
+**版本 1.0.1** —
 - 🧠 **工具链调用（推荐）** — 注册为 LLM FunctionTool，大模型根据自然语言自动调用，支持灵活参数组合
 - 🏛 **固定命令（兼容）** — 传统 `/xxx` 命令，习惯快捷操作的用户可继续使用
 
