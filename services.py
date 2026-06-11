@@ -43,7 +43,7 @@ def health_today_data(client_manager: GarminClientManager) -> str:
             active_calories = stats.get("activeKilocalories", "N/A")
             total_calories = stats.get("totalKilocalories", "N/A")
 
-            hr_stats = heart_rate.get("heartRateValues", [])
+            hr_stats = heart_rate.get("heartRateValues") or []
             hr_values = [h[1] for h in hr_stats if h[1] and h[1] > 30]
             if hr_values:
                 avg_hr = round(sum(hr_values) / len(hr_values))
@@ -52,10 +52,10 @@ def health_today_data(client_manager: GarminClientManager) -> str:
             else:
                 avg_hr = max_hr = min_hr = "N/A"
 
-            daily_sleep = sleep_data.get("dailySleepDTO", {})
+            daily_sleep = sleep_data.get("dailySleepDTO") or {}
             sleep_time_secs = daily_sleep.get("sleepTimeSeconds") or 0
             sleep_hours = round(sleep_time_secs / 3600, 1) if sleep_time_secs else "N/A"
-            sleep_score = daily_sleep.get("sleepScores", {}).get("overall", {}).get("value", "N/A")
+            sleep_score = ((daily_sleep.get("sleepScores") or {}).get("overall") or {}).get("value", "N/A")
             deep_sleep = round((daily_sleep.get("deepSleepSeconds") or 0) / 60, 1)
             light_sleep = round((daily_sleep.get("lightSleepSeconds") or 0) / 60, 1)
             rem_sleep = round((daily_sleep.get("remSleepSeconds") or 0) / 60, 1)
@@ -88,7 +88,7 @@ def health_heart_rate_days(client_manager: GarminClientManager, days: int) -> st
             for i in range(ndays):
                 day = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
                 hr_data = await client_manager.call(client.get_heart_rates, day)
-                hr_vals = [h[1] for h in hr_data.get("heartRateValues", []) if h[1] and h[1] > 30]
+                hr_vals = [h[1] for h in (hr_data.get("heartRateValues") or []) if h[1] and h[1] > 30]
                 if hr_vals:
                     avg = round(sum(hr_vals) / len(hr_vals))
                     mx = max(hr_vals)
@@ -115,10 +115,10 @@ def health_sleep_days(client_manager: GarminClientManager, days: int) -> str:
             for i in range(ndays):
                 day = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
                 sleep_data = await client_manager.call(client.get_sleep_data, day)
-                daily = sleep_data.get("dailySleepDTO", {})
+                daily = sleep_data.get("dailySleepDTO") or {}
                 sleep_secs = daily.get("sleepTimeSeconds") or 0
                 hours = round(sleep_secs / 3600, 1) if sleep_secs else "N/A"
-                score = daily.get("sleepScores", {}).get("overall", {}).get("value", "N/A")
+                score = ((daily.get("sleepScores") or {}).get("overall") or {}).get("value", "N/A")
                 deep = round((daily.get("deepSleepSeconds") or 0) / 60, 1)
                 light = round((daily.get("lightSleepSeconds") or 0) / 60, 1)
                 rem = round((daily.get("remSleepSeconds") or 0) / 60, 1)
@@ -183,7 +183,7 @@ def detailed_health_report(client_manager: GarminClientManager) -> str:
             report_lines.append(f"📅 今日 ({today})")
             report_lines.append(f"  👣 步数: {steps}步 | {dist}km | {cal}kcal")
 
-            hr_vals = [h[1] for h in hr_data.get("heartRateValues", []) if h[1] and h[1] > 30]
+            hr_vals = [h[1] for h in (hr_data.get("heartRateValues") or []) if h[1] and h[1] > 30]
             if hr_vals:
                 avg_hr = round(sum(hr_vals) / len(hr_vals))
                 max_hr = max(hr_vals)
@@ -192,9 +192,9 @@ def detailed_health_report(client_manager: GarminClientManager) -> str:
             else:
                 report_lines.append("  💓 心率: 暂无数据")
 
-            daily_sleep = sleep_data.get("dailySleepDTO", {})
+            daily_sleep = sleep_data.get("dailySleepDTO") or {}
             sleep_hours = round((daily_sleep.get("sleepTimeSeconds") or 0) / 3600, 1)
-            sleep_score = daily_sleep.get("sleepScores", {}).get("overall", {}).get("value", "N/A")
+            sleep_score = ((daily_sleep.get("sleepScores") or {}).get("overall") or {}).get("value", "N/A")
             report_lines.append(f"  😴 睡眠: {sleep_hours}h (评分{sleep_score})")
 
             # 7 天平均
@@ -205,7 +205,7 @@ def detailed_health_report(client_manager: GarminClientManager) -> str:
                 hr_7d = await client_manager.call(client.get_heart_rates, day)
                 sd_7d = await client_manager.call(client.get_sleep_data, day)
                 total_steps_7d.append(stats_7d.get("totalSteps", 0) or 0)
-                total_sleep_7d.append(sd_7d.get("dailySleepDTO", {}).get("sleepTimeSeconds") or 0)
+                total_sleep_7d.append((sd_7d.get("dailySleepDTO") or {}).get("sleepTimeSeconds") or 0)
 
             avg_steps = round(sum(total_steps_7d) / len(total_steps_7d)) if total_steps_7d else "N/A"
             avg_sleep_h = round(sum(total_sleep_7d) / len(total_sleep_7d) / 3600, 1) if total_sleep_7d else "N/A"
@@ -256,7 +256,7 @@ def get_filtered_activities(
 
         matched = []
         for act in activities:
-            act_type = act.get("activityType", {}).get("typeKey", "")
+            act_type = (act.get("activityType") or {}).get("typeKey", "")
             act_name = (act.get("activityName", "") or "")
             date_str = (act.get("startTimeLocal", "") or "")[:10]
 
@@ -276,7 +276,7 @@ def get_filtered_activities(
 
 def build_activity_line(act: dict, formatter=None) -> str:
     """格式化单条活动信息为多行字符串。"""
-    act_type = act.get("activityType", {}).get("typeKey", "未知")
+    act_type = (act.get("activityType") or {}).get("typeKey", "未知")
     act_name = (act.get("activityName", "无名称") or "")[:18]
     start_time = act.get("startTimeLocal", "")
     date_str = start_time[:10] if start_time else "未知日期"
@@ -330,7 +330,7 @@ def compute_volume(
     """通用统计计算，返回 {dist, count, elev, duration}。"""
     result = {"dist": 0.0, "count": 0, "elev": 0.0, "duration": 0.0}
     for act in activities:
-        act_type = act.get("activityType", {}).get("typeKey", "")
+        act_type = (act.get("activityType") or {}).get("typeKey", "")
         if act_type not in type_keys:
             continue
         date_str = (act.get("startTimeLocal", "") or "")[:10]
