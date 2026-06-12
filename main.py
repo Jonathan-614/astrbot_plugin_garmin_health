@@ -36,7 +36,7 @@ from .services import (
 )
 
 
-@register("astrbot_plugin_garmin_health", "Jonathan-614", "佳明健康看板 - 通过Garmin Connect查询健康数据（心率、睡眠、步数、活动统计等）并生成分析报告，支持自然语言查询", "1.0.0")
+@register("astrbot_plugin_garmin_health", "Jonathan-614", "佳明健康看板 - 通过Garmin Connect查询健康数据（心率、睡眠、步数、活动统计等）并生成分析报告，支持自然语言查询", "1.0.1")
 class GarminHealthPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)

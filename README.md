@@ -95,7 +95,7 @@
 
 ## 依赖
 
-- `garminconnect>=0.3.3`
+- `garminconnect>=0.3.4`
 
 ## 安装
 
