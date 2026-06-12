@@ -220,17 +220,17 @@ class GarminQueryActivitiesTool(FunctionTool):
 
 
 # ════════════════════════════════════════════
-# 工具 7：跑量统计
+# 工具 7：跑步统计
 # ════════════════════════════════════════════
 
 @dataclass
 class GarminRunningVolumeTool(FunctionTool):
-    """跑量统计"""
+    """跑步统计（九类细分）"""
 
     client_manager: object = None
     name: str = "garmin_running_volume"
     description: str = (
-        "查询跑量统计，含路跑和越野跑，支持按时间范围筛选。"
+        "查询跑步统计，分跑步、路跑、场地跑、室内跑、跑步机、虚拟跑、越野跑、超马和障碍跑九类，支持按时间范围筛选。"
         "适合问「这个月跑了多少」「跑量统计」「今年跑量」「最近跑步情况」等。"
     )
     parameters: dict = field(default_factory=lambda: {
@@ -261,15 +261,23 @@ class GarminRunningVolumeTool(FunctionTool):
             if not activities:
                 return "❌ 暂无活动数据"
 
-            road = compute_volume(activities, {"running"}, start_date, end_date)
-            trail = compute_volume(activities, {"trail_running"}, start_date, end_date)
-            if road["count"] == 0 and trail["count"] == 0:
+            running = compute_volume(activities, {"running"}, start_date, end_date)
+            street_run = compute_volume(activities, {"street_running"}, start_date, end_date)
+            track_run = compute_volume(activities, {"track_running"}, start_date, end_date)
+            indoor_run = compute_volume(activities, {"indoor_running"}, start_date, end_date)
+            treadmill = compute_volume(activities, {"treadmill_running"}, start_date, end_date)
+            virtual_run = compute_volume(activities, {"virtual_run"}, start_date, end_date)
+            trail_run = compute_volume(activities, {"trail_running"}, start_date, end_date)
+            ultra_run = compute_volume(activities, {"ultra_run"}, start_date, end_date)
+            obstacle = compute_volume(activities, {"obstacle_run"}, start_date, end_date)
+            all_zero = all(v["count"] == 0 for v in [running, street_run, track_run, indoor_run, treadmill, virtual_run, trail_run, ultra_run, obstacle])
+            if all_zero:
                 return f"📅 {start_date} ~ {end_date}\n━━━━━━━━━━━━━━\n暂无跑步记录"
 
-            return build_volume_report("跑量统计", road=road, trail=trail)
+            return build_volume_report("跑步统计", running=running, street_running=street_run, track_running=track_run, indoor_running=indoor_run, treadmill_running=treadmill, virtual_running=virtual_run, trail_running=trail_run, ultra_running=ultra_run, obstacle_racing=obstacle)
         except Exception as e:
-            logger.error(f"跑量统计失败: {e}", exc_info=True)
-            return f"❌ 跑量统计失败: {e}"
+            logger.error(f"跑步统计失败: {e}", exc_info=True)
+            return f"❌ 跑步统计失败: {e}"
 
 
 # ════════════════════════════════════════════

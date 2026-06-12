@@ -85,10 +85,11 @@ class GarminClientManager:
             self._client = client
             return client
 
-    async def get_activities(self, max_activities: int = None, page_size: int = 100) -> list:
+    async def get_activities(self, max_activities: int = None, page_size: int = 100, activity_type: str = None) -> list:
         """分页获取活动列表，避免只统计最近 200 条导致年度/PB 漏算。
 
         max_activities 不传时读取配置 garmin_max_activities，默认 600。
+        activity_type 指定时传给 Garmin API 服务端过滤（如 running/hiking/walking 等 typeKey）。
         """
         default_max = clamp_int(self.config.get("garmin_max_activities", 600), 600, 1, 10000)
         max_activities = clamp_int(max_activities, default_max, 1, 10000)
@@ -98,7 +99,7 @@ class GarminClientManager:
         start = 0
         while len(activities) < max_activities:
             limit = min(page_size, max_activities - len(activities))
-            batch = await self.call(client.get_activities, start, limit)
+            batch = await self.call(client.get_activities, start, limit, activity_type)
             if not batch:
                 break
             activities.extend(batch)

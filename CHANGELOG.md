@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.0.2 (2026-06-12)
+
+### 🏗 统计重构
+- 全部统计命令多分类细分：跑步 9 类 / 徒步 2 类 / 步行 3 类 / 骑行 17 类 / 游泳 3 类
+- `/跑量` 改名 `/跑步`，docstring 和 `tools.py` 同步更新
+- `build_volume_report` 重构为 `**kwargs` 多类型范式，替代旧 `road/trail/single` 范式
+- `compute_volume` 新增 calories / steps / weight / hr_weighted / hr_dur / strokes 字段
+- 活动单行展示增强：新增步数、消耗热量、负重重量（rucking）、心率加权平均
+- 配速仅在有距离和时长时显示；室内/场地/虚拟/跑步机等白名单类型不显示爬升
+
+### 🎯 子类型系统
+- 新增 `SUBTYPE_ALIAS` 子类型中文别名表（main.py），`/活动` 支持子类型筛选（如 `/活动 越野跑 2026`）
+- `/活动 all` 取全部活动（不限类型），`/活动 子类型 all` 取全部该类型活动
+- 新增 `SUBTYPE_TO_PARENT` 映射（services.py），Garmin API 用父类型查询后 Python 层按子类型过滤
+- 新增 `TYPEKEY_MAP` 映射表（services.py），集中管理所有活动类型的图标 / 名称 / typeKeys，作为唯一权威来源
+
+### 🐛 修复
+- 修复 Garmin API 返回 `null` 时 `data` 字段迭代崩溃的问题
+- 修复零距离活动（负重徒步等）被错误跳过不显示的问题
+- v1.0.1 版本号同步 + `garminconnect` 最低版本改为 `>=0.3.4`（0.3.3 不支持国服登录）
+
 ## v1.0.1 (2026-06-10)
 
 ### 🏗 重构架构

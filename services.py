@@ -248,9 +248,27 @@ def get_filtered_activities(
     max_count: int = 200,
 ) -> list:
     """获取过滤后的活动列表。"""
+    # 子类型 → 父类型映射（Garmin API 只接受父类型作为 activity_type 参数）
+    SUBTYPE_TO_PARENT = {
+        "street_running": "running", "track_running": "running", "indoor_running": "running",
+        "treadmill_running": "running", "virtual_run": "running", "trail_running": "running",
+        "ultra_run": "running", "obstacle_run": "running",
+        "rucking": "hiking",
+        "speed_walking": "walking", "casual_walking": "walking",
+        "road_biking": "cycling", "mountain_biking": "cycling", "gravel_cycling": "cycling",
+        "indoor_cycling": "cycling", "bmx": "cycling", "e_bike_fitness": "cycling",
+        "downhill_biking": "cycling", "recumbent_cycling": "cycling", "cyclocross": "cycling",
+        "virtual_ride": "cycling", "track_cycling": "cycling", "hand_cycling": "cycling",
+        "indoor_hand_cycling": "cycling", "e_enduro_mtb": "cycling", "enduro_mtb": "cycling",
+        "e_bike_mountain": "cycling",
+        "lap_swimming": "swimming", "open_water_swimming": "swimming",
+    }
+
     async def _run():
         client = await client_manager.get_client()
-        activities = await client_manager.get_activities()
+        # 子类型用父类型查 API（Garmin API 不接受子类型），Python 层再过滤
+        api_type = SUBTYPE_TO_PARENT.get(activity_type, activity_type)
+        activities = await client_manager.get_activities(activity_type=api_type)
         if not activities:
             return []
 
@@ -259,7 +277,6 @@ def get_filtered_activities(
             act_type = (act.get("activityType") or {}).get("typeKey", "")
             act_name = (act.get("activityName", "") or "")
             date_str = (act.get("startTimeLocal", "") or "")[:10]
-
             if activity_type and act_type != activity_type:
                 continue
             if keyword and keyword.lower() not in act_name.lower():
@@ -277,15 +294,19 @@ def get_filtered_activities(
 def build_activity_line(act: dict, formatter=None) -> str:
     """格式化单条活动信息为多行字符串。"""
     act_type = (act.get("activityType") or {}).get("typeKey", "未知")
-    act_name = (act.get("activityName", "无名称") or "")[:18]
+    act_name = act.get("activityName", "无名称") or "无名称"
     start_time = act.get("startTimeLocal", "")
     date_str = start_time[:10] if start_time else "未知日期"
 
     distance = (act.get("distance", 0) or 0) / 1000
     duration = act.get("duration", 0) or 0
-    avg_hr = act.get("averageHeartRate", None)
+    avg_hr = act.get("averageHeartRate") or act.get("averageHR")
     elevation = act.get("elevationGain", 0) or 0
     avg_speed = act.get("averageSpeed", 0) or 0
+    calories = act.get("calories", 0) or 0
+    pack_weight = safe_float(act.get("beginPackWeight", 0)) / 1000 if act_type == "rucking" else 0
+    step_types = {"walking", "hiking", "running", "trail_running", "rucking"}
+    steps = int(act.get("steps", 0) or 0)
 
     if formatter:
         pace_str = formatter(avg_speed)
@@ -296,9 +317,19 @@ def build_activity_line(act: dict, formatter=None) -> str:
     line += f"\n  📏 {distance:.2f}km | ⏱ {_format_duration(duration)}"
     if avg_hr:
         line += f" | 💓 {avg_hr}bpm"
-    if elevation:
+    no_elev_types = {"indoor_running", "track_running", "virtual_running", "treadmill_running",
+                     "indoor_cycling", "virtual_cycling"}
+    if elevation and act_type not in no_elev_types:
         line += f" | ⛰ {round(elevation)}m"
-    line += f" | 🏃 {pace_str}"
+    if pack_weight > 0:
+        line += f" | 🏋️{round(pack_weight, 1)}kg"
+    if steps > 0 and act_type in step_types:
+        line += f" | 👣{steps}步"
+    if calories >= 0:
+        line += f" | 🔥{round(calories)}kcal"
+    dur_h = duration / 3600
+    if distance > 0 and dur_h > 0:
+        line += f" | 🏃 {pace_str}"
     return line
 
 
@@ -312,14 +343,16 @@ def activities_report(
     if not activities:
         return "❌ 暂无活动数据"
     lines = [header, "━━━━━━━━━━━━━━"]
-    for i, act in enumerate(activities[:max_items], 1):
-        lines.append(f"\n#{i} {build_activity_line(act, formatter)}")
+    idx = 0
+    for act in activities[:max_items]:
+        idx += 1
+        lines.append(f"\n#{idx} {build_activity_line(act, formatter)}")
     if len(activities) > max_items:
         lines.append(f"\n...还有{len(activities) - max_items}条未显示")
     return "\n".join(lines)
 
 
-# ─── 体积统计（跑量/徒步/步行/骑行/游泳）────────────
+# ─── 体积统计（跑步/徒步/步行/骑行/游泳）───────
 
 def compute_volume(
     activities: list,
@@ -327,8 +360,8 @@ def compute_volume(
     start_date: Optional[str],
     end_date: Optional[str],
 ) -> dict:
-    """通用统计计算，返回 {dist, count, elev, duration}。"""
-    result = {"dist": 0.0, "count": 0, "elev": 0.0, "duration": 0.0}
+    """通用统计计算，返回 {dist, count, elev, duration, calories, steps, weight, hr_weighted, hr_dur, strokes}。"""
+    result = {"dist": 0.0, "count": 0, "elev": 0.0, "duration": 0.0, "calories": 0.0, "steps": 0, "weight": 0.0, "hr_weighted": 0.0, "hr_dur": 0.0, "strokes": 0}
     for act in activities:
         act_type = (act.get("activityType") or {}).get("typeKey", "")
         if act_type not in type_keys:
@@ -341,45 +374,323 @@ def compute_volume(
         result["dist"] += safe_float(act.get("distance", 0)) / 1000
         result["count"] += 1
         result["elev"] += safe_float(act.get("elevationGain", 0))
-        result["duration"] += safe_float(act.get("duration", 0)) / 3600
+        act_dur_s = safe_float(act.get("duration", 0))
+        result["duration"] += act_dur_s / 3600
+        result["calories"] += safe_float(act.get("calories", 0))
+        result["steps"] += int(safe_float(act.get("steps", 0)))
+        bw = safe_float(act.get("beginPackWeight", 0)) / 1000  # 克→千克
+        if bw > result["weight"]:
+            result["weight"] = bw  # 取最大值（每次活动背包重量独立，不累加）
+        # 心率：duration 加权平均
+        avg_hr = act.get("averageHeartRate") or act.get("averageHR")
+        if avg_hr and act_dur_s > 0:
+            result["hr_weighted"] += avg_hr * act_dur_s
+            result["hr_dur"] += act_dur_s
+        # 游泳划水次数
+        result["strokes"] += int(safe_float(act.get("strokes", 0)))
     return result
 
 
-def build_volume_report(
-    title: str,
-    road: dict = None,
-    trail: dict = None,
-    single: dict = None,
-    label: str = "",
-) -> str:
-    """生成统计报告，支持路跑/越野跑分开或单一类型。"""
-    lines = []
-    if label:
-        lines.append(label)
-    lines.append(f"📊 {title}")
-    lines.append("━━━━━━━━━━━━━━")
+# ─── typeKey 映射表（唯一权威来源）─────────────
 
-    if road is not None:
-        combined_dist = road["dist"] + trail["dist"]
-        combined_cnt = road["count"] + trail["count"]
-        combined_elev = road["elev"] + trail["elev"]
-        combined_dur = road["duration"] + trail["duration"]
-        lines.append(f"🏃 路跑: {road['dist']:.2f}km ({road['count']}次)")
-        lines.append(f"   ⛰ 爬升{round(road['elev'])}m ⏱{round(road['duration'], 1)}h")
-        lines.append(f"🏔 越野跑: {trail['dist']:.2f}km ({trail['count']}次)")
-        lines.append(f"   ⛰ 爬升{round(trail['elev'])}m ⏱{round(trail['duration'], 1)}h")
+TYPEKEY_MAP = {
+    "running": [
+        ("running",          "🏃 跑步",     {"running"}),
+        ("indoor_running",   "🏠 室内跑步", {"indoor_running"}),
+        ("track_running",    "🏟 场地跑步", {"track_running"}),
+        ("virtual_run",      "💻 虚拟跑步", {"virtual_run"}),
+        ("street_running",   "🛣 路跑",     {"street_running"}),
+        ("ultra_run",        "⚡ 超马",     {"ultra_run"}),
+        ("trail_running",    "🏔 越野跑",   {"trail_running"}),
+        ("treadmill_running","🏋 跑步机",   {"treadmill_running"}),
+        ("obstacle_run",     "🚧 障碍跑",   {"obstacle_run"}),
+    ],
+    "hiking": [
+        ("hiking",   "🥾 徒步",      {"hiking"}),
+        ("rucking",  "🎒 负重徒步",  {"rucking"}),
+    ],
+    "walking": [
+        ("walking",         "🚶 步行",    {"walking"}),
+        ("speed_walking",   "🏃 竞走",    {"speed_walking"}),
+        ("casual_walking",  "🚶‍♂️ 散步",  {"casual_walking"}),
+    ],
+    "swimming": [
+        ("swimming",              "🏊 游泳",         {"swimming"}),
+        ("open_water_swimming",   "🌊 公开水域游泳", {"open_water_swimming"}),
+        ("lap_swimming",          "🏊‍♂️ 泳池游泳",   {"lap_swimming"}),
+    ],
+    "cycling": [
+        ("cycling",             "🚲 骑行",             {"cycling"}),
+        ("e_enduro_mtb",        "⚡ e-Enduro",         {"e_enduro_mtb"}),
+        ("enduro_mtb",          "🔋 Enduro",           {"enduro_mtb"}),
+        ("road_biking",         "🚴 公路自行车",       {"road_biking"}),
+        ("track_cycling",       "🏟 场地自行车",       {"track_cycling"}),
+        ("indoor_hand_cycling", "✋🏠 室内手摇自行车", {"indoor_hand_cycling"}),
+        ("indoor_cycling",      "🏠 室内自行车",       {"indoor_cycling"}),
+        ("bmx",                 "🔄 BMX",              {"bmx"}),
+        ("mountain_biking",     "⛰ 山地自行车",       {"mountain_biking"}),
+        ("hand_cycling",        "✋ 手摇自行车",       {"hand_cycling"}),
+        ("e_bike_fitness",      "⚡ 电动自行车",       {"e_bike_fitness"}),
+        ("e_bike_mountain",     "⛰⚡ e-MTB",          {"e_bike_mountain"}),
+        ("gravel_cycling",      "🪨 Gravel",           {"gravel_cycling"}),
+        ("virtual_ride",        "💻 虚拟自行车",       {"virtual_ride"}),
+        ("cyclocross",          "🏁 公路越野",         {"cyclocross"}),
+        ("recumbent_cycling",   "🛋 躺车",             {"recumbent_cycling"}),
+        ("downhill_biking",     "⏬ 速降",             {"downhill_biking"}),
+    ],
+}
+
+
+
+def build_volume_report(title: str, **kwargs) -> str:
+    """通用运动统计报告生成器。
+
+    根据提供的关键字参数自动判断报告类型并格式化输出。
+    支持：跑步类、徒步类（含步数+负重重量）、步行类、骑行类、游泳类、单类型。"""
+    lines = [f"📊 {title}", "━━━━━━━━━━━━━━"]
+
+    # ── 辅助函数 ──
+    def _pace_str(dist_km: float, dur_h: float) -> str:
+        if dist_km > 0 and dur_h > 0:
+            return f" {dur_h * 60 / dist_km:.1f}min/km"
+        if dur_h >= 0:
+            return f" 0.0min/km"
+        return ""
+
+    def _swim_pace_str(dist_km: float, dur_h: float) -> str:
+        if dist_km > 0 and dur_h > 0:
+            pace = dur_h * 6 / dist_km  # min/100m（1km=10×100m）
+            return f" {pace:.1f}min/100m"
+        return ""
+
+    def _elev_str(label: str, elev: float, no_elev: set = None) -> str:
+        if no_elev and label in no_elev:
+            return ""
+        return f" ⛰ {round(elev)}m" if elev > 0 else ""
+
+    def _cal_str(cal: float) -> str:
+        return f" 🔥{round(cal)}kcal" if cal >= 0 else ""
+
+    def _steps_str(steps: int) -> str:
+        return f" 👣{steps}步" if steps >= 0 else ""
+
+    def _weight_str(w: float) -> str:
+        return f" 🏋️{round(w, 1)}kg" if w >= 0 else ""
+
+    def _hr_str(d: dict) -> str:
+        """返回持续时间加权的平均心率字符串。"""
+        if d.get("hr_dur", 0) > 0:
+            avg = round(d["hr_weighted"] / d["hr_dur"])
+            return f" 💓{avg}bpm"
+        return ""
+
+    def _stroke_str(strokes: int) -> str:
+        return f" 🤿{strokes}strokes" if strokes > 0 else ""
+
+    RUNNING_NO_ELEV = {"🏠 室内跑步", "🏟 场地跑步", "💻 虚拟跑步", "🏋 跑步机"}
+    CYCLING_NO_ELEV = {"🏠 室内自行车", "💻 虚拟自行车", "🏟 场地自行车", "✋🏠 室内手摇自行车", "🔄 BMX"}
+
+    # ── 跑步类（九类细分） ──
+    if kwargs.get("running") is not None:
+        sections = [
+            ("🏃 跑步",       kwargs.get("running")),
+            ("🛣 路跑",       kwargs.get("street_running")),
+            ("🏔 越野跑",     kwargs.get("trail_running")),
+            ("⚡ 超马",       kwargs.get("ultra_running")),
+            ("🏠 室内跑步",   kwargs.get("indoor_running")),
+            ("🏟 场地跑步",   kwargs.get("track_running")),
+            ("🏋 跑步机",     kwargs.get("treadmill_running")),
+            ("💻 虚拟跑步",   kwargs.get("virtual_running")),
+            ("🚧 障碍跑",     kwargs.get("obstacle_racing")),
+        ]
+        total_dist = total_cnt = total_elev = total_dur = total_cal = 0.0
+        for _label, data in sections:
+            if data and data["count"] > 0:
+                pace = _pace_str(data["dist"], data["duration"])
+                elev = _elev_str(_label, data["elev"], RUNNING_NO_ELEV)
+                hr = _hr_str(data)
+                cal = _cal_str(data["calories"])
+                lines.append(f"{_label}: {data['dist']:.2f}km ({data['count']}次){pace}")
+                lines.append(f"  {elev}{hr}⏱{round(data['duration'], 1)}h{cal}")
+                total_dist += data["dist"]
+                total_cnt += data["count"]
+                total_elev += data["elev"]
+                total_dur += data["duration"]
+                total_cal += data["calories"]
         lines.append("───")
-        lines.append(f"📌 合计: {combined_dist:.2f}km ({combined_cnt}次)")
-        lines.append(f"   ⛰ 爬升{round(combined_elev)}m ⏱{round(combined_dur, 1)}h")
-        if combined_cnt > 0:
-            lines.append(f"   📏 均次 {combined_dist/combined_cnt:.2f}km")
-    elif single is not None:
-        d = single
-        lines.append(f"📏 距离: {d['dist']:.2f}km ({d['count']}次)")
+        lines.append(f"📌 合计: {total_dist:.2f}km ({int(total_cnt)}次)")
+        if total_elev > 0:
+            lines.append(f"   ⛰ {round(total_elev)}m ⏱{round(total_dur, 1)}h{_cal_str(total_cal)}")
+        else:
+            lines.append(f"   ⏱{round(total_dur, 1)}h{_cal_str(total_cal)}")
+        if total_cnt > 0:
+            lines.append(f"   📏 均次 {total_dist/total_cnt:.2f}km")
+
+    # ── 徒步类（含步数，负重徒步含重量） ──
+    elif kwargs.get("hike_normal") is not None:
+        sections = [
+            ("🥾 徒步",     kwargs.get("hike_normal")),
+            ("🎒 负重徒步", kwargs.get("hike_ruck")),
+        ]
+        total_dist = total_cnt = total_elev = total_dur = total_cal = 0.0
+        total_steps = 0
+        for _label, data in sections:
+            if data and data["count"] > 0:
+                steps = _steps_str(data.get("steps", 0))
+                weight = _weight_str(data.get("weight", 0)) if "负重" in _label else ""
+                hr = _hr_str(data)
+                cal = _cal_str(data["calories"])
+                lines.append(f"{_label}: {data['dist']:.2f}km ({data['count']}次)")
+                lines.append(f"   {steps}{weight}{hr}⛰ {round(data['elev'])}m ⏱{round(data['duration'], 1)}h{cal}")
+                total_dist += data["dist"]
+                total_cnt += data["count"]
+                total_elev += data["elev"]
+                total_dur += data["duration"]
+                total_cal += data["calories"]
+                total_steps += data.get("steps", 0)
+        lines.append("───")
+        lines.append(f"📌 合计: {total_dist:.2f}km ({int(total_cnt)}次){_steps_str(total_steps)}")
+        if total_elev > 0:
+            lines.append(f"   ⛰ {round(total_elev)}m ⏱{round(total_dur, 1)}h{_cal_str(total_cal)}")
+        else:
+            lines.append(f"   ⏱{round(total_dur, 1)}h{_cal_str(total_cal)}")
+        if total_cnt > 0:
+            lines.append(f"   📏 均次 {total_dist/total_cnt:.2f}km")
+
+    # ── 步行类（三分类，含步数） ──
+    elif kwargs.get("walk_normal") is not None:
+        sections = [
+            ("🚶 步行",   kwargs.get("walk_normal")),
+            ("🏃 竞走",   kwargs.get("walk_speed")),
+            ("🚶\u200d♂️ 散步", kwargs.get("walk_casual")),
+        ]
+        total_dist = total_cnt = total_elev = total_dur = total_cal = 0.0
+        total_steps = 0
+        for _label, data in sections:
+            if data and data["count"] > 0:
+                steps = _steps_str(data.get("steps", 0))
+                cal = _cal_str(data["calories"])
+                lines.append(f"{_label}: {data['dist']:.2f}km ({data['count']}次){steps}")
+                hr = _hr_str(data)
+                elev = _elev_str(_label, data["elev"])
+                lines.append(f"  {elev}{hr}⏱{round(data['duration'], 1)}h{cal}")
+                total_dist += data["dist"]
+                total_cnt += data["count"]
+                total_elev += data["elev"]
+                total_dur += data["duration"]
+                total_cal += data["calories"]
+                total_steps += data.get("steps", 0)
+        lines.append("───")
+        lines.append(f"📌 合计: {total_dist:.2f}km ({int(total_cnt)}次){_steps_str(total_steps)}")
+        if total_elev > 0:
+            lines.append(f"   ⛰ {round(total_elev)}m ⏱{round(total_dur, 1)}h{_cal_str(total_cal)}")
+        else:
+            lines.append(f"   ⏱{round(total_dur, 1)}h{_cal_str(total_cal)}")
+        if total_cnt > 0:
+            lines.append(f"   📏 均次 {total_dist/total_cnt:.2f}km")
+
+    # ── 游泳类 ──
+    elif kwargs.get("swim_generic") is not None:
+        sections = [
+            ("🏊 游泳",         kwargs.get("swim_generic")),
+            ("🌊 公开水域游泳", kwargs.get("swim_open")),
+            ("🏊\u200d♂️ 泳池游泳",  kwargs.get("swim_pool")),
+        ]
+        total_dist = total_cnt = total_dur = total_cal = 0.0
+        for _label, data in sections:
+            if data and data["count"] > 0:
+                pace = _swim_pace_str(data["dist"], data["duration"])
+                strokes = _stroke_str(data.get("strokes", 0))
+                cal = _cal_str(data["calories"])
+                hr = _hr_str(data)
+                lines.append(f"{_label}: {data['dist']:.2f}km ({data['count']}次){pace}{strokes}")
+                lines.append(f"   {hr}⏱{round(data['duration'], 1)}h{cal}")
+                total_dist += data["dist"]
+                total_cnt += data["count"]
+                total_dur += data["duration"]
+                total_cal += data["calories"]
+        lines.append("───")
+        lines.append(f"📌 合计: {total_dist:.2f}km ({int(total_cnt)}次)")
+        lines.append(f"   ⏱{round(total_dur, 1)}h{_cal_str(total_cal)}")
+        if total_cnt > 0:
+            lines.append(f"   📏 均次 {total_dist/total_cnt:.2f}km")
+
+    # ── 骑行类（17类细分） ──
+    elif kwargs.get("cycling_generic") is not None or kwargs.get("cycling_road") is not None:
+        sections = [
+            ("🚲 骑行",       kwargs.get("cycling_generic")),
+            ("🚴 公路自行车", kwargs.get("cycling_road")),
+            ("⛰ 山地自行车", kwargs.get("cycling_mountain")),
+            ("🪨 Gravel",     kwargs.get("cycling_gravel")),
+            ("🔋 Enduro",     kwargs.get("cycling_enduro")),
+            ("⚡ e-Enduro",   kwargs.get("cycling_eenduro")),
+            ("⛰⚡ e-MTB",    kwargs.get("cycling_emtb")),
+            ("⚡ 电动自行车", kwargs.get("cycling_ebike")),
+            ("🏁 公路越野",   kwargs.get("cycling_cyclocross")),
+            ("⏬ 速降",       kwargs.get("cycling_downhill")),
+            ("🔄 BMX",        kwargs.get("cycling_bmx")),
+            ("🏟 场地自行车", kwargs.get("cycling_track")),
+            ("🏠 室内自行车", kwargs.get("cycling_indoor")),
+            ("✋🏠 室内手摇", kwargs.get("cycling_indoor_hand")),
+            ("✋ 手摇自行车", kwargs.get("cycling_hand")),
+            ("🛋 躺车",       kwargs.get("cycling_recumbent")),
+            ("💻 虚拟自行车", kwargs.get("cycling_virtual")),
+        ]
+        total_dist = total_cnt = total_elev = total_dur = total_cal = 0.0
+        for _label, data in sections:
+            if data and data["count"] > 0:
+                pace = _pace_str(data["dist"], data["duration"])
+                elev = _elev_str(_label, data["elev"], CYCLING_NO_ELEV)
+                hr = _hr_str(data)
+                cal = _cal_str(data["calories"])
+                lines.append(f"{_label}: {data['dist']:.2f}km ({data['count']}次){pace}")
+                lines.append(f"  {elev}{hr}⏱{round(data['duration'], 1)}h{cal}")
+                total_dist += data["dist"]
+                total_cnt += data["count"]
+                total_elev += data["elev"]
+                total_dur += data["duration"]
+                total_cal += data["calories"]
+        lines.append("───")
+        lines.append(f"📌 合计: {total_dist:.2f}km ({int(total_cnt)}次)")
+        if total_elev > 0:
+            lines.append(f"   ⛰ {round(total_elev)}m ⏱{round(total_dur, 1)}h{_cal_str(total_cal)}")
+        else:
+            lines.append(f"   ⏱{round(total_dur, 1)}h{_cal_str(total_cal)}")
+        if total_cnt > 0:
+            lines.append(f"   📏 均次 {total_dist/total_cnt:.2f}km")
+
+    # ── 单类型（通用） ──
+    elif kwargs.get("single") is not None:
+        d = kwargs["single"]
+        pace = _pace_str(d["dist"], d["duration"])
+        cal = _cal_str(d["calories"])
+        steps = _steps_str(d.get("steps", 0))
+        lines.append(f"📏 距离: {d['dist']:.2f}km ({d['count']}次){pace}{steps}")
         lines.append(f"⛰ 爬升: {round(d['elev'])}m")
-        lines.append(f"⏱ 时长: {round(d['duration'], 1)}h")
+        lines.append(f"⏱ 时长: {round(d['duration'], 1)}h{cal}")
         if d["count"] > 0:
             lines.append(f"📏 均次: {d['dist']/d['count']:.2f}km")
+
+    # ── 徒步+步行混合（旧兼容） ──
+    elif kwargs.get("hiking") is not None and kwargs.get("walking") is not None:
+        for _label, d in [("🥾 徒步", kwargs["hiking"]), ("🚶 步行", kwargs["walking"])]:
+            steps = _steps_str(d.get("steps", 0))
+            lines.append(f"{_label}: {d['dist']:.2f}km ({d['count']}次){steps}")
+            lines.append(f"   ⛰ {round(d['elev'])}m ⏱{round(d['duration'], 1)}h{_cal_str(d['calories'])}")
+        h, w = kwargs["hiking"], kwargs["walking"]
+        total_dist = h["dist"] + w["dist"]
+        total_cnt = h["count"] + w["count"]
+        total_elev = h["elev"] + w["elev"]
+        total_dur = h["duration"] + w["duration"]
+        total_cal = h["calories"] + w["calories"]
+        lines.append("───")
+        lines.append(f"📌 合计: {total_dist:.2f}km ({int(total_cnt)}次)")
+        lines.append(f"   ⛰ {round(total_elev)}m ⏱{round(total_dur, 1)}h{_cal_str(total_cal)}")
+        if total_cnt > 0:
+            lines.append(f"   📏 均次 {total_dist/total_cnt:.2f}km")
+
+    else:
+        lines.append("暂无统计数据")
 
     return "\n".join(lines)
 
