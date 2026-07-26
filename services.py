@@ -4,7 +4,7 @@
 main.py 和 tools.py 通过调用这里的函数来工作，避免重复。
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from astrbot.api import logger
 
@@ -17,6 +17,30 @@ from .utils import (
     pace_from_speed,
     parse_volume_arg,
 )
+
+
+def _sleep_time_range(daily_sleep: dict) -> str:
+    """将 dailySleepDTO 中的起止毫秒时间戳转为可读的 12 小时制时间范围。
+    优先用 Local 时间戳（东八区），fallback 到 GMT 和裸字段。
+    """
+    def _ts_to_time(ts_ms):
+        if ts_ms and ts_ms > 0:
+            dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone(timedelta(hours=8)))
+            return dt.strftime("%I:%M%p").lstrip("0")
+        return None
+    for start_key, end_key in [
+        ("sleepStartTimestampLocal", "sleepEndTimestampLocal"),
+        ("sleepStartTimestampGMT", "sleepEndTimestampGMT"),
+        ("sleepStartTimestamp", "sleepEndTimestamp"),
+    ]:
+        start_ts = daily_sleep.get(start_key, 0)
+        end_ts = daily_sleep.get(end_key, 0)
+        if start_ts and end_ts:
+            t_start = _ts_to_time(start_ts)
+            t_end = _ts_to_time(end_ts)
+            if t_start and t_end:
+                return f"{t_start}-{t_end}"
+    return "12:00AM-12:00AM"
 
 
 # ─── 健康数据 ──────────────────────────────────────
@@ -60,13 +84,15 @@ def health_today_data(client_manager: GarminClientManager) -> str:
             light_sleep = round((daily_sleep.get("lightSleepSeconds") or 0) / 60, 1)
             rem_sleep = round((daily_sleep.get("remSleepSeconds") or 0) / 60, 1)
 
+            sleep_range = _sleep_time_range(daily_sleep)
+            sleep_range_str = f" ({sleep_range})" if sleep_range else ""
             return (
                 f"📊 今日健康概览 ({today})\n"
                 f"━━━━━━━━━━━━━━\n"
                 f"👣 步数: {total_steps} 步 | {dist_km} km\n"
                 f"🔥 卡路里: {active_calories}/{total_calories} kcal\n"
                 f"💓 心率: avg {avg_hr} / max {max_hr} / min {min_hr} bpm\n"
-                f"😴 睡眠: {sleep_hours}h (评分{sleep_score})\n"
+                f"😴 睡眠: {sleep_hours}h 评分{sleep_score}{sleep_range_str}\n"
                 f"   深睡{deep_sleep}min / 浅睡{light_sleep}min / REM{rem_sleep}min"
             )
         except Exception as e:
@@ -122,7 +148,9 @@ def health_sleep_days(client_manager: GarminClientManager, days: int) -> str:
                 deep = round((daily.get("deepSleepSeconds") or 0) / 60, 1)
                 light = round((daily.get("lightSleepSeconds") or 0) / 60, 1)
                 rem = round((daily.get("remSleepSeconds") or 0) / 60, 1)
-                lines.append(f"{day}: {hours}h 评分{score} (深{deep}/浅{light}/REM{rem}min)")
+                sleep_range = _sleep_time_range(daily)
+                range_str = f" ({sleep_range})" if sleep_range else ""
+                lines.append(f"{day}: {hours}h 评分{score}{range_str} (深{deep}/浅{light}/REM{rem}min)")
             return "\n".join(lines)
         except Exception as e:
             return f"❌ 获取睡眠数据失败: {e}"
