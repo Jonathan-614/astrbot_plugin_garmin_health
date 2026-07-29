@@ -21,11 +21,11 @@ from .utils import (
 
 def _sleep_time_range(daily_sleep: dict) -> str:
     """将 dailySleepDTO 中的起止毫秒时间戳转为可读的 12 小时制时间范围。
-    优先用 Local 时间戳（东八区），fallback 到 GMT 和裸字段。
+    优先用 Local 时间戳，fallback 到 GMT 和裸字段。
     """
     def _ts_to_time(ts_ms):
         if ts_ms and ts_ms > 0:
-            dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone(timedelta(hours=8)))
+            dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
             return dt.strftime("%I:%M%p").lstrip("0")
         return None
     for start_key, end_key in [
@@ -40,7 +40,7 @@ def _sleep_time_range(daily_sleep: dict) -> str:
             t_end = _ts_to_time(end_ts)
             if t_start and t_end:
                 return f"{t_start}-{t_end}"
-    return "12:00AM-12:00AM"
+    return None
 
 
 # ─── 健康数据 ──────────────────────────────────────
@@ -78,22 +78,24 @@ def health_today_data(client_manager: GarminClientManager) -> str:
 
             daily_sleep = sleep_data.get("dailySleepDTO") or {}
             sleep_time_secs = daily_sleep.get("sleepTimeSeconds") or 0
-            sleep_hours = round(sleep_time_secs / 3600, 1) if sleep_time_secs else "N/A"
-            sleep_score = ((daily_sleep.get("sleepScores") or {}).get("overall") or {}).get("value", "N/A")
-            deep_sleep = round((daily_sleep.get("deepSleepSeconds") or 0) / 60, 1)
-            light_sleep = round((daily_sleep.get("lightSleepSeconds") or 0) / 60, 1)
-            rem_sleep = round((daily_sleep.get("remSleepSeconds") or 0) / 60, 1)
-
-            sleep_range = _sleep_time_range(daily_sleep)
-            sleep_range_str = f" ({sleep_range})" if sleep_range else ""
+            if sleep_time_secs:
+                sleep_hours = round(sleep_time_secs / 3600, 1)
+                sleep_score = ((daily_sleep.get("sleepScores") or {}).get("overall") or {}).get("value", "N/A")
+                deep_sleep = round((daily_sleep.get("deepSleepSeconds") or 0) / 60, 1)
+                light_sleep = round((daily_sleep.get("lightSleepSeconds") or 0) / 60, 1)
+                rem_sleep = round((daily_sleep.get("remSleepSeconds") or 0) / 60, 1)
+                sleep_range = _sleep_time_range(daily_sleep)
+                sleep_range_str = f" ({sleep_range})" if sleep_range else ""
+                sleep_line = f"😴 睡眠: {sleep_hours}h 评分{sleep_score}{sleep_range_str}\n   深睡{deep_sleep}min / 浅睡{light_sleep}min / REM{rem_sleep}min"
+            else:
+                sleep_line = "😴 睡眠: N/Ah"
             return (
                 f"📊 今日健康概览 ({today})\n"
                 f"━━━━━━━━━━━━━━\n"
                 f"👣 步数: {total_steps} 步 | {dist_km} km\n"
                 f"🔥 卡路里: {active_calories}/{total_calories} kcal\n"
                 f"💓 心率: avg {avg_hr} / max {max_hr} / min {min_hr} bpm\n"
-                f"😴 睡眠: {sleep_hours}h 评分{sleep_score}{sleep_range_str}\n"
-                f"   深睡{deep_sleep}min / 浅睡{light_sleep}min / REM{rem_sleep}min"
+                f"{sleep_line}"
             )
         except Exception as e:
             logger.error(f"获取健康概览失败: {e}", exc_info=True)
@@ -143,14 +145,17 @@ def health_sleep_days(client_manager: GarminClientManager, days: int) -> str:
                 sleep_data = await client_manager.call(client.get_sleep_data, day)
                 daily = sleep_data.get("dailySleepDTO") or {}
                 sleep_secs = daily.get("sleepTimeSeconds") or 0
-                hours = round(sleep_secs / 3600, 1) if sleep_secs else "N/A"
-                score = ((daily.get("sleepScores") or {}).get("overall") or {}).get("value", "N/A")
-                deep = round((daily.get("deepSleepSeconds") or 0) / 60, 1)
-                light = round((daily.get("lightSleepSeconds") or 0) / 60, 1)
-                rem = round((daily.get("remSleepSeconds") or 0) / 60, 1)
-                sleep_range = _sleep_time_range(daily)
-                range_str = f" ({sleep_range})" if sleep_range else ""
-                lines.append(f"{day}: {hours}h 评分{score}{range_str} (深{deep}/浅{light}/REM{rem}min)")
+                if sleep_secs:
+                    hours = round(sleep_secs / 3600, 1)
+                    score = ((daily.get("sleepScores") or {}).get("overall") or {}).get("value", "N/A")
+                    deep = round((daily.get("deepSleepSeconds") or 0) / 60, 1)
+                    light = round((daily.get("lightSleepSeconds") or 0) / 60, 1)
+                    rem = round((daily.get("remSleepSeconds") or 0) / 60, 1)
+                    sleep_range = _sleep_time_range(daily)
+                    range_str = f" ({sleep_range})" if sleep_range else ""
+                    lines.append(f"{day}: {hours}h 评分{score}{range_str} (深{deep}/浅{light}/REM{rem}min)")
+                else:
+                    lines.append(f"{day}: N/Ah")
             return "\n".join(lines)
         except Exception as e:
             return f"❌ 获取睡眠数据失败: {e}"
@@ -226,21 +231,30 @@ def detailed_health_report(client_manager: GarminClientManager) -> str:
             report_lines.append(f"  😴 睡眠: {sleep_hours}h (评分{sleep_score})")
 
             # 7 天平均
-            total_steps_7d, total_sleep_7d = [], []
+            total_steps_7d, total_sleep_7d, sleep_days_with_data = [], [], 0
             for i in range(1, 7):
                 day = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
                 stats_7d = await client_manager.call(client.get_stats, day)
                 hr_7d = await client_manager.call(client.get_heart_rates, day)
                 sd_7d = await client_manager.call(client.get_sleep_data, day)
                 total_steps_7d.append(stats_7d.get("totalSteps", 0) or 0)
-                total_sleep_7d.append((sd_7d.get("dailySleepDTO") or {}).get("sleepTimeSeconds") or 0)
+                sleep_secs = (sd_7d.get("dailySleepDTO") or {}).get("sleepTimeSeconds") or 0
+                total_sleep_7d.append(sleep_secs)
+                if sleep_secs > 0:
+                    sleep_days_with_data += 1
 
             avg_steps = round(sum(total_steps_7d) / len(total_steps_7d)) if total_steps_7d else "N/A"
-            avg_sleep_h = round(sum(total_sleep_7d) / len(total_sleep_7d) / 3600, 1) if total_sleep_7d else "N/A"
+            if sleep_days_with_data > 0:
+                avg_sleep_h = round(sum(s for s in total_sleep_7d if s > 0) / sleep_days_with_data / 3600, 1)
+                no_data_days = len(total_sleep_7d) - sleep_days_with_data
+                no_data_note = f" ({no_data_days}天无记录)" if no_data_days > 0 else ""
+            else:
+                avg_sleep_h = "N/A"
+                no_data_note = ""
             report_lines.append("")
             report_lines.append("📊 7天平均数据")
             report_lines.append(f"  👣 日均步数: {avg_steps}")
-            report_lines.append(f"  😴 日均睡眠: {avg_sleep_h}h")
+            report_lines.append(f"  😴 日均睡眠: {avg_sleep_h}h{no_data_note}")
 
             # 建议
             report_lines.append("")
