@@ -122,7 +122,7 @@ class GarminHealthPlugin(Star):
             "  /心率       — 最近7天心率趋势\n"
             "  /睡眠       — 最近7天睡眠报告\n"
             "  /步数       — 最近7天步数数据\n"
-            "  /身体报告   — 综合健康诊断（含7天平均和建议）\n"
+            "  /报告       — 综合健康诊断（含7天平均和建议）\n"
             "🏃 活动统计\n"
             "  /活动       — 查看活动\n"
             "    默认: 最近5条\n"
@@ -185,10 +185,10 @@ class GarminHealthPlugin(Star):
         result = await health_steps_days(self.client_manager, 7)()
         yield event.plain_result(result)
 
-    @filter.command("身体报告")
+    @filter.command("报告", alias={"身体报告", "健康报告", "建议"})
     async def detailed_report(self, event: AstrMessageEvent):
         """综合健康诊断报告（7天平均与建议）"""
-        result = await detailed_health_report(self.client_manager)()
+        result = await detailed_health_report(self.client_manager, context=self.context, ai_provider_name=self.config.get("health_ai_provider", ""))()
         yield event.plain_result(result)
 
     # ═══════════════════════════════════════════

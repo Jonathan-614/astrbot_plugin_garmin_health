@@ -146,7 +146,7 @@ class GarminDetailedReportTool(FunctionTool):
     name: str = "garmin_detailed_report"
     description: str = (
         "生成综合健康诊断报告，包含今日数据和7天平均，以及健康建议。"
-        "适合问「身体报告」「综合健康」「详细报告」「全面体检」等。"
+        "适合问「报告」「身体报告」「健康报告」等。"
     )
     parameters: dict = field(default_factory=lambda: {
         "type": "object",

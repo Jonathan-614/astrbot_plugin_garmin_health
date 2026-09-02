@@ -3,19 +3,19 @@
     "description": "Garmin Connect 登录邮箱",
     "type": "string",
     "default": "",
-    "hint": "请填写Garmin账号的登录邮箱",
+    "hint": "请填写 Garmin 账号的登录邮箱",
     "required": true
   },
   "garmin_password": {
     "description": "Garmin Connect 登录密码",
     "type": "string",
     "default": "",
-    "hint": "请填写Garmin账号的密码",
+    "hint": "请填写 Garmin 账号的密码",
     "required": true,
     "sensitive": true
   },
   "garmin_is_cn": {
-    "description": "是否为Garmin中国区账号",
+    "description": "是否为 Garmin 中国区账号",
     "type": "bool",
     "default": true,
     "hint": "中国区账号选是，国际区账号选否",
@@ -27,5 +27,18 @@
     "default": 600,
     "hint": "用于年度报告、PB、跑量和活动搜索等统计。默认拉取最近600条活动，通常足够覆盖近几年记录；活动很多可调大，最大建议10000；调大后查询会更慢。",
     "required": false
+  },
+  "health_ai_provider": {
+    "type": "string",
+    "description": "[健康建议] 使用的 AI 模型",
+    "hint": "选择一个AI模型来生成个性化的健康小贴士。留空则使用内置规则判断。",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "health_ai_prompt_template": {
+    "type": "text",
+    "description": "[健康建议] 提示词模板",
+    "hint": "发送给 AI 的提示词模板。用 {health_data} 占位符嵌入健康数据，留空使用内置默认模板。",
+    "default": "你是一个专业的健康分析师。请基于以下7天的健康数据给出3-5条个性化健康建议。\n\n{health_data}\n\n## 要求\n1. 根据数据给出具体、可操作的建议，每条一行，用\"🔸\"开头\n2. 好的地方也要肯定，用\"✅\"开头\n3. 语气温和鼓励，每条建议简洁明了\n4. 不要输出Markdown格式，纯文本即可\n5. 仅输出建议内容，每行一条"
   }
 }

@@ -188,7 +188,149 @@ def health_steps_days(client_manager: GarminClientManager, days: int) -> str:
     return _run
 
 
-def detailed_health_report(client_manager: GarminClientManager) -> str:
+
+
+
+
+
+async def _generate_health_tips(
+    context, ai_provider_name: str, client, client_manager,
+    today: str, avg_steps, avg_sleep_h, sleep_score, sleep_days_with_data: int,
+) -> list:
+    """用 AI 或规则生成健康小贴士。"""
+    # ── 未配置 AI → 规则模式 ──
+    if not ai_provider_name or not context:
+        return _rule_based_tips(avg_steps, avg_sleep_h, sleep_score)
+
+    # ── 收集详细数据供 AI 参考 ──
+    detailed_lines = []
+    today_hr_vals = []
+    today_sleep_val = "N/A"
+    today_steps_val = "N/A"
+    daily_hr_avg = []  # 收集每天的平均心率
+    hr_days_with_data = 0  # 有心率数据的天数
+    try:
+        # 取今天数据用于今日速览
+        today_day = datetime.now().strftime("%Y-%m-%d")
+        today_stats = await client_manager.call(client.get_stats, today_day)
+        today_hr_resp = await client_manager.call(client.get_heart_rates, today_day)
+        today_sleep_resp = await client_manager.call(client.get_sleep_data, today_day)
+        today_steps_val = str(today_stats.get("totalSteps", 0) or 0)
+        today_hr_vals = [h[1] for h in (today_hr_resp.get("heartRateValues") or []) if h[1] and h[1] > 30]
+        sleep_secs_today = (today_sleep_resp.get("dailySleepDTO") or {}).get("sleepTimeSeconds") or 0
+        today_sleep_val = f"{round(sleep_secs_today / 3600, 1)}h" if sleep_secs_today > 0 else "无数据"
+
+        # 取过去 7 天明细
+        for i in range(1, 8):
+            day = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+            stats_d = await client_manager.call(client.get_stats, day)
+            hr_d = await client_manager.call(client.get_heart_rates, day)
+            sd_d = await client_manager.call(client.get_sleep_data, day)
+            steps_d = stats_d.get("totalSteps", 0) or 0
+            sleep_secs = (sd_d.get("dailySleepDTO") or {}).get("sleepTimeSeconds") or 0
+            sleep_d = round(sleep_secs / 3600, 1) if sleep_secs > 0 else 0
+            hr_vals = [h[1] for h in (hr_d.get("heartRateValues") or []) if h[1] and h[1] > 30]
+            hr_avg = round(sum(hr_vals) / len(hr_vals)) if hr_vals else "N/A"
+            hr_max = max(hr_vals) if hr_vals else "N/A"
+            sleep_str = f"{sleep_d}h" if sleep_d > 0 else "无数据"
+            detailed_lines.append(f"{day}: {steps_d}步 | HR avg{hr_avg}/max{hr_max} | 睡眠{sleep_str}")
+
+            # 收集每天的平均心率
+            if hr_vals:
+                day_avg_hr = round(sum(hr_vals) / len(hr_vals))
+                daily_hr_avg.append(day_avg_hr)
+                hr_days_with_data += 1
+        # 已去掉 if i == 0 块，今天数据提前拿了
+    except Exception as e:
+        logger.warning(f"收集AI健康数据失败: {e}")
+
+    hr_avg_str = str(round(sum(today_hr_vals) / len(today_hr_vals))) if today_hr_vals else "N/A"
+    hr_max_str = str(max(today_hr_vals)) if today_hr_vals else "N/A"
+
+    # ── 计算7天日均心率 ──
+    if daily_hr_avg:
+        avg_hr_7d = round(sum(daily_hr_avg) / len(daily_hr_avg))
+        max_hr_7d = max(daily_hr_avg)
+        min_hr_7d = min(daily_hr_avg)
+        hr_no_data_days = 7 - hr_days_with_data
+        hr_no_data_note = f" ({hr_no_data_days}天无记录)" if hr_no_data_days > 0 else ""
+    else:
+        avg_hr_7d = "N/A"
+        max_hr_7d = "N/A"
+        min_hr_7d = "N/A"
+        hr_no_data_note = " (无记录)"
+
+    # ── 获取提示词模板 ──
+    config = getattr(client_manager, "config", {})
+    template = config.get("health_ai_prompt_template", "") if isinstance(config, dict) else ""
+    if not template or not template.strip():
+        template = (
+            "你是一个专业的健康分析师。请基于以下7天的健康数据给出3-5条个性化健康建议。\n\n"
+            "{health_data}\n\n"
+            "## 要求\n"
+            "1. 根据数据给出具体、可操作的建议，每条一行，用\"🔸\"开头\n"
+            "2. 好的地方也要肯定，用\"✅\"开头\n"
+            "3. 语气温和鼓励，每条建议简洁明了\n"
+            "4. 不要输出Markdown格式，纯文本即可\n"
+            "5. 仅输出建议内容，每行一条"
+        )
+
+    # ── 打包数据为一个占位符 {health_data} ──
+    health_data = (
+        f"## 今日数据\n"
+        f"- 步数：{today_steps_val}\n"
+        f"- 心率：avg {hr_avg_str} / max {hr_max_str}\n"
+        f"- 睡眠：{today_sleep_val}（评分{sleep_score}）\n"
+        f"\n"
+        f"## 过去7天数据\n"
+        f"- 日均步数：{avg_steps}\n"
+        f"- 日均心率：avg{avg_hr_7d}/max{max_hr_7d}/min{min_hr_7d}bpm{hr_no_data_note}\n"
+        f"- 日均睡眠：{avg_sleep_h}h\n"
+        f"- 有睡眠数据的天数：{sleep_days_with_data}/7\n"
+        f"- 有心率数据的天数：{hr_days_with_data}/7\n"
+        f"\n"
+        f"## 每日明细\n"
+        f"{chr(10).join(detailed_lines)}"
+    )
+    prompt = template.format(health_data=health_data)
+
+    # ── 调用 AI ──
+    try:
+        provider = context.get_provider_by_id(ai_provider_name)
+        if not provider:
+            logger.warning(f"健康小贴士AI: 未找到模型 '{ai_provider_name}'，回退规则模式")
+            return _rule_based_tips(avg_steps, avg_sleep_h, sleep_score)
+        token = await provider.text_chat(prompt=prompt)
+        response = token.completion_text.strip()
+        # 解析 AI 返回的每一行作为一条建议
+        tips = [line.strip() for line in response.split("\n") if line.strip()]
+        # 如果 AI 返回了空内容，回退
+        if not tips:
+            return _rule_based_tips(avg_steps, avg_sleep_h, sleep_score)
+        return tips
+    except Exception as e:
+        logger.error(f"健康小贴士AI调用失败: {e}，回退规则模式", exc_info=True)
+        return _rule_based_tips(avg_steps, avg_sleep_h, sleep_score)
+
+
+def _rule_based_tips(avg_steps, avg_sleep_h, sleep_score) -> list:
+    """规则模式：根据阈值生成健康小贴士。"""
+    tips = []
+    if isinstance(avg_steps, int) and avg_steps < 8000:
+        tips.append("\U0001f538 日均步数偏少，建议多走动")
+    elif isinstance(avg_steps, int) and avg_steps >= 10000:
+        tips.append("\u2705 步数达标，继续保持")
+    if isinstance(avg_sleep_h, float) and avg_sleep_h < 7:
+        tips.append("\U0001f538 睡眠不足7小时，建议早睡")
+    elif isinstance(avg_sleep_h, float) and avg_sleep_h >= 8:
+        tips.append("\u2705 睡眠充足，状态不错")
+    if isinstance(sleep_score, (int, float)) and sleep_score < 70:
+        tips.append("\U0001f538 睡眠质量偏低，注意改善睡眠环境")
+    return tips if tips else ["\u2705 整体状态良好，继续保持"]
+
+
+
+def detailed_health_report(client_manager: GarminClientManager, context=None, ai_provider_name: str = "") -> str:
     """综合健康诊断报告。"""
     async def _run():
         try:
@@ -232,12 +374,22 @@ def detailed_health_report(client_manager: GarminClientManager) -> str:
 
             # 7 天平均
             total_steps_7d, total_sleep_7d, sleep_days_with_data = [], [], 0
-            for i in range(1, 7):
+            daily_hr_avg = []  # 收集每天的平均心率
+            hr_days_with_data = 0  # 有心率数据的天数
+            for i in range(1, 8):
                 day = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
                 stats_7d = await client_manager.call(client.get_stats, day)
                 hr_7d = await client_manager.call(client.get_heart_rates, day)
                 sd_7d = await client_manager.call(client.get_sleep_data, day)
                 total_steps_7d.append(stats_7d.get("totalSteps", 0) or 0)
+
+                # 收集心率数据：计算每天的平均心率
+                hr_vals = [h[1] for h in (hr_7d.get("heartRateValues") or []) if h[1] and h[1] > 30]
+                if hr_vals:
+                    day_avg_hr = round(sum(hr_vals) / len(hr_vals))
+                    daily_hr_avg.append(day_avg_hr)
+                    hr_days_with_data += 1
+
                 sleep_secs = (sd_7d.get("dailySleepDTO") or {}).get("sleepTimeSeconds") or 0
                 total_sleep_7d.append(sleep_secs)
                 if sleep_secs > 0:
@@ -251,25 +403,42 @@ def detailed_health_report(client_manager: GarminClientManager) -> str:
             else:
                 avg_sleep_h = "N/A"
                 no_data_note = ""
+
+            # 计算日均心率（每天平均心率的平均）
+            if daily_hr_avg:
+                avg_hr_7d = round(sum(daily_hr_avg) / len(daily_hr_avg))
+                max_hr_7d = max(daily_hr_avg)
+                min_hr_7d = min(daily_hr_avg)
+                hr_no_data_days = 7 - hr_days_with_data
+                hr_no_data_note = f" ({hr_no_data_days}天无记录)" if hr_no_data_days > 0 else ""
+            else:
+                avg_hr_7d = "N/A"
+                max_hr_7d = "N/A"
+                min_hr_7d = "N/A"
+                hr_no_data_note = " (无记录)"
+
             report_lines.append("")
-            report_lines.append("📊 7天平均数据")
+            yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            report_lines.append(f"📊 过去7天 ({week_ago} ~ {yesterday})")
             report_lines.append(f"  👣 日均步数: {avg_steps}")
+            report_lines.append(f"  💓 日均心率: avg{avg_hr_7d}/max{max_hr_7d}/min{min_hr_7d}bpm{hr_no_data_note}")
             report_lines.append(f"  😴 日均睡眠: {avg_sleep_h}h{no_data_note}")
 
-            # 建议
+            # 建议（AI 或 规则）
             report_lines.append("")
             report_lines.append("💡 健康小贴士")
-            tips = []
-            if isinstance(avg_steps, int) and avg_steps < 8000:
-                tips.append("🔸 日均步数偏少，建议多走动")
-            elif isinstance(avg_steps, int) and avg_steps >= 10000:
-                tips.append("✅ 步数达标，继续保持")
-            if isinstance(avg_sleep_h, float) and avg_sleep_h < 7:
-                tips.append("🔸 睡眠不足7小时，建议早睡")
-            elif isinstance(avg_sleep_h, float) and avg_sleep_h >= 8:
-                tips.append("✅ 睡眠充足，状态不错")
-            if isinstance(sleep_score, (int, float)) and sleep_score < 70:
-                tips.append("🔸 睡眠质量偏低，注意改善睡眠环境")
+            tips = await _generate_health_tips(
+                context=context,
+                ai_provider_name=ai_provider_name,
+                client=client,
+                client_manager=client_manager,
+                today=today,
+                avg_steps=avg_steps,
+                avg_sleep_h=avg_sleep_h,
+                sleep_score=sleep_score,
+                sleep_days_with_data=sleep_days_with_data,
+            )
             report_lines.extend(tips if tips else ["✅ 整体状态良好，继续保持"])
 
             return "\n".join(report_lines)
