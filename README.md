@@ -3,7 +3,7 @@
 # 佳明健康看板
 
 [![GitHub release](https://img.shields.io/github/v/release/Jonathan-614/astrbot_plugin_garmin_health)](https://github.com/Jonathan-614/astrbot_plugin_garmin_health/releases)
-[![Changelog](https://img.shields.io/badge/changelog-v1.0.2-blue)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/changelog-v1.0.3-blue)](CHANGELOG.md)
 
 </div>
 
